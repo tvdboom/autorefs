@@ -10,24 +10,31 @@ this plugin searches for references of the form `[identifier][]` or `[title][ide
 and fixes them using the previously stored identifier-URL mapping.
 """
 
+from __future__ import annotations
+
 import contextlib
 import functools
 import logging
 import re
-from typing import Callable, Dict, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 from urllib.parse import urlsplit
 
-from mkdocs.config import Config
-from mkdocs.config.config_options import Type
 from mkdocs.plugins import BasePlugin
-from mkdocs.structure.pages import Page
-from mkdocs.structure.toc import AnchorLink
-from mkdocs.utils import warning_filter
 
 from mkdocs_autorefs.references import AutorefsExtension, fix_refs, relative_url
 
-log = logging.getLogger(f"mkdocs.plugins.{__name__}")
-log.addFilter(warning_filter)
+if TYPE_CHECKING:
+    from mkdocs.config.defaults import MkDocsConfig
+    from mkdocs.structure.pages import Page
+    from mkdocs.structure.toc import AnchorLink
+
+try:
+    from mkdocs.plugins import get_plugin_logger
+
+    log = get_plugin_logger(__name__)
+except ImportError:
+    # TODO: remove once support for MkDocs <1.5 is dropped
+    log = logging.getLogger(f"mkdocs.plugins.{__name__}")  # type: ignore[assignment]
 
 
 class AutorefsPlugin(BasePlugin):
@@ -43,21 +50,18 @@ class AutorefsPlugin(BasePlugin):
     for more information about its plugin system.
     """
 
-    config = (
-        ("scan_html_tags", Type(bool, default=False))
-    )
-
+    scan_html_tags: bool = False
     scan_toc: bool = True
-    current_page: Optional[str] = None
+    current_page: str | None = None
 
     def __init__(self) -> None:
         """Initialize the object."""
         super().__init__()
-        self._url_map: Dict[str, str] = {}
-        self._abs_url_map: Dict[str, str] = {}
-        self.get_fallback_anchor: Optional[Callable[[str], Optional[str]]] = None  # noqa: WPS234
+        self._url_map: dict[str, str] = {}
+        self._abs_url_map: dict[str, str] = {}
+        self.get_fallback_anchor: Callable[[str], str | None] | None = None
 
-    def register_anchor(self, page: str, identifier: str):
+    def register_anchor(self, page: str, identifier: str) -> None:
         """Register that an anchor corresponding to an identifier was encountered when rendering the page.
 
         Arguments:
@@ -66,7 +70,7 @@ class AutorefsPlugin(BasePlugin):
         """
         self._url_map[identifier] = f"{page}#{identifier}"
 
-    def register_url(self, identifier: str, url: str):
+    def register_url(self, identifier: str, url: str) -> None:
         """Register that the identifier should be turned into a link to this URL.
 
         Arguments:
@@ -75,10 +79,10 @@ class AutorefsPlugin(BasePlugin):
         """
         self._abs_url_map[identifier] = url
 
-    def _get_item_url(  # noqa: WPS234
+    def _get_item_url(
         self,
         identifier: str,
-        fallback: Optional[Callable[[str], Sequence[str]]] = None,
+        fallback: Callable[[str], Sequence[str]] | None = None,
     ) -> str:
         try:
             return self._url_map[identifier]
@@ -94,11 +98,11 @@ class AutorefsPlugin(BasePlugin):
                         return url
             raise
 
-    def get_item_url(  # noqa: WPS234
+    def get_item_url(
         self,
         identifier: str,
-        from_url: Optional[str] = None,
-        fallback: Optional[Callable[[str], Sequence[str]]] = None,
+        from_url: str | None = None,
+        fallback: Callable[[str], Sequence[str]] | None = None,
     ) -> str:
         """Return a site-relative URL with anchor to the identifier, if it's present anywhere.
 
@@ -117,7 +121,7 @@ class AutorefsPlugin(BasePlugin):
                 return relative_url(from_url, url)
         return url
 
-    def on_config(self, config: Config, **kwargs) -> Config:  # noqa: W0613,R0201 (unused arguments, cannot be static)
+    def on_config(self, config: MkDocsConfig) -> MkDocsConfig | None:
         """Instantiate our Markdown extension.
 
         Hook for the [`on_config` event](https://www.mkdocs.org/user-guide/plugins/#on_config).
@@ -126,16 +130,15 @@ class AutorefsPlugin(BasePlugin):
 
         Arguments:
             config: The MkDocs config object.
-            kwargs: Additional arguments passed by MkDocs.
 
         Returns:
             The modified config.
         """
-        log.debug(f"{__name__}: Adding AutorefsExtension to the list")
+        log.debug("Adding AutorefsExtension to the list")
         config["markdown_extensions"].append(AutorefsExtension())
         return config
 
-    def on_page_markdown(self, markdown: str, page: Page, **kwargs) -> str:  # noqa: W0613 (unused arguments)
+    def on_page_markdown(self, markdown: str, page: Page, **kwargs: Any) -> str:  # noqa: ARG002
         """Remember which page is the current one.
 
         Arguments:
@@ -146,10 +149,10 @@ class AutorefsPlugin(BasePlugin):
         Returns:
             The same Markdown. We only use this hook to map anchors to URLs.
         """
-        self.current_page = page.url  # noqa: WPS601
+        self.current_page = page.url
         return markdown
 
-    def on_page_content(self, html: str, page: Page, **kwargs) -> str:  # noqa: W0613 (unused arguments)
+    def on_page_content(self, html: str, page: Page, **kwargs: Any) -> str:  # noqa: ARG002
         """Map anchors to URLs.
 
         Hook for the [`on_page_content` event](https://www.mkdocs.org/user-guide/plugins/#on_page_content).
@@ -166,11 +169,11 @@ class AutorefsPlugin(BasePlugin):
             The same HTML. We only use this hook to map anchors to URLs.
         """
         if self.scan_toc:
-            log.debug(f"{__name__}: Mapping identifiers to URLs for page {page.file.src_path}")
+            log.debug(f"Mapping identifiers to URLs for page {page.file.src_path}")
             for item in page.toc.items:
                 self.map_urls(page.url, item)
 
-        if self.config["scan_html_tags"]:
+        if self.scan_html_tags:
             # Matches any html anchors with the id property (e.g. <a id="xx">)
             for match in re.findall(r"""<.*?id=["']([_\w-]*)["'].*?>""", html):
                 self.register_anchor(page.url, match)
@@ -190,7 +193,7 @@ class AutorefsPlugin(BasePlugin):
         for child in anchor.children:
             self.map_urls(base_url, child)
 
-    def on_post_page(self, output: str, page: Page, **kwargs) -> str:  # noqa: W0613 (unused arguments)
+    def on_post_page(self, output: str, page: Page, **kwargs: Any) -> str:  # noqa: ARG002
         """Fix cross-references.
 
         Hook for the [`on_post_page` event](https://www.mkdocs.org/user-guide/plugins/#on_post_page).
@@ -211,15 +214,13 @@ class AutorefsPlugin(BasePlugin):
         Returns:
             Modified HTML.
         """
-        log.debug(f"{__name__}: Fixing references in page {page.file.src_path}")
+        log.debug(f"Fixing references in page {page.file.src_path}")
 
         url_mapper = functools.partial(self.get_item_url, from_url=page.url, fallback=self.get_fallback_anchor)
         fixed_output, unmapped = fix_refs(output, url_mapper)
 
         if unmapped and log.isEnabledFor(logging.WARNING):
             for ref in unmapped:
-                log.warning(
-                    f"{__name__}: {page.file.src_path}: Could not find cross-reference target '[{ref}]'",
-                )
+                log.warning(f"{page.file.src_path}: Could not find cross-reference target '[{ref}]'")
 
         return fixed_output
