@@ -16,8 +16,9 @@ if TYPE_CHECKING:
     from markdown import Markdown
 
 AUTO_REF_RE = re.compile(
-    r"<span data-(?P<kind>autorefs-identifier|autorefs-optional|autorefs-optional-hover)="
-    r'("?)(?P<identifier>[^"<>]*)\2>(?P<title>.*?)</span>',
+    r"<span (class=[\"\'](?P<class>[\w-]+?)[\"\'] )?"
+    r"data-(?P<kind>autorefs-identifier|autorefs-optional|autorefs-optional-hover)="
+    r'[\"\'](?P<identifier>[^"<>]*)[\"\']>(?P<title>.*?)</span>',
 )
 """A regular expression to match mkdocs-autorefs' special reference markers
 in the [`on_post_page` hook][mkdocs_autorefs.plugin.AutorefsPlugin.on_post_page].
@@ -156,6 +157,10 @@ def fix_ref(url_mapper: Callable[[str], str], unmapped: list[str]) -> Callable:
         identifier = match["identifier"]
         title = match["title"]
         kind = match["kind"]
+        if classes := match.groupdict()["class"]:
+            classes = classes.split(" ")
+        else:
+            classes = []
 
         try:
             url = url_mapper(unescape(identifier))
@@ -171,7 +176,7 @@ def fix_ref(url_mapper: Callable[[str], str], unmapped: list[str]) -> Callable:
 
         parsed = urlsplit(url)
         external = parsed.scheme or parsed.netloc
-        classes = ["autorefs", "autorefs-external" if external else "autorefs-internal"]
+        classes += ["autorefs", "autorefs-external" if external else "autorefs-internal"]
         class_attr = " ".join(classes)
         if kind == "autorefs-optional-hover":
             return f'<a class="{class_attr}" title="{identifier}" href="{escape(url)}">{title}</a>'
